@@ -1,0 +1,22 @@
+{
+  "name": "VOAZ Orçamentos",
+  "short_name": "VOAZ",
+  "description": "Sistema de orçamentos VOAZ",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a1a1a",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "/logo-voaz.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-voaz.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
