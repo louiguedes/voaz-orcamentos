@@ -605,8 +605,9 @@ export default function Proposta() {
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600 }}>R$ {fmt(pv)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 700, color: tot > 0 ? '#111' : '#ccc' }}>R$ {fmt(tot)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'center' }}>
-                            <select value={item.faturamento || 'direto'}
-                              onChange={e => updateItem(idx, 'faturamento', e.target.value)}
+                            <select
+                              defaultValue={item.faturamento || 'direto'}
+                              onBlur={e => updateItem(idx, 'faturamento', e.target.value)}
                               style={{ fontSize: 11, border: '1px solid #ddd', borderRadius: 3, padding: '2px 4px', background: item.faturamento === 'indireto' ? '#fff3e0' : '#f5f5f5' }}>
                               <option value="direto">Direto</option>
                               <option value="indireto">Indireto</option>
