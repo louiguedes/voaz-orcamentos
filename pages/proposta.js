@@ -186,8 +186,13 @@ export default function Proposta() {
     })
   }
 
-  function aplicarMargemDisciplina(discId, margem) {
+  function setMargemDisciplinaInput(discId, margem) {
     setMargensDisciplina(prev => ({ ...prev, [discId]: margem }))
+  }
+
+  function aplicarMargemDisciplina(discId) {
+    const margem = margensDisciplina[discId]
+    if (!margem) return
     setItens(prev => prev.map(item => {
       if (item.discId === discId && !item.margem_override) {
         return { ...item, margem: parseFloat(margem) || 0 }
@@ -547,16 +552,21 @@ export default function Proposta() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                                 <span style={{ fontWeight: 700, fontSize: 12 }}>{item.discId.padStart(2,'0')}. {item.discNome}</span>
                                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <span style={{ fontSize: 11, color: '#aaa' }}>Margem da disciplina:</span>
-                                  <input
-                                    type="number"
-                                    value={margemDisc}
-                                    onChange={e => aplicarMargemDisciplina(item.discId, e.target.value)}
-                                    placeholder="0"
-                                    style={{ width: 60, border: 'none', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right' }}
-                                  />
-                                  <span style={{ fontSize: 11, color: '#aaa' }}>%</span>
-                                </div>
+                                <span style={{ fontSize: 11, color: '#aaa' }}>Margem da disciplina:</span>
+                                <input
+                                  type="number"
+                                  value={margensDisciplina[item.discId] || ''}
+                                  onChange={e => setMargemDisciplinaInput(item.discId, e.target.value)}
+                                  onKeyDown={e => e.key === 'Enter' && aplicarMargemDisciplina(item.discId)}
+                                  placeholder="0"
+                                  style={{ width: 60, border: 'none', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right' }}
+                                />
+                                <span style={{ fontSize: 11, color: '#aaa' }}>%</span>
+                                <button
+                                  onClick={() => aplicarMargemDisciplina(item.discId)}
+                                  style={{ background: '#4caf50', color: '#fff', border: 'none', borderRadius: 3, padding: '3px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
+                                >Aplicar</button>
+                              </div>
                               </div>
                             </td>
                           </tr>

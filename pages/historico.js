@@ -48,9 +48,10 @@ export default function Historico() {
   async function restaurarVersao(propostaId, versao) {
     if (!confirm(`Restaurar versão ${versao.label}? A versão atual será salva antes.`)) return
 
-    // Salva versão atual antes de restaurar
     const { data: propostaAtual } = await supabase.from('proposals').select('*').eq('id', propostaId).single()
     const { data: itensAtuais } = await supabase.from('proposal_items').select('*').eq('proposal_id', propostaId)
+
+    // Salva versão atual como checkpoint antes de restaurar
     await supabase.from('proposal_versions').insert([{
       proposal_id: propostaId,
       versao: propostaAtual.versao_atual || 1,
@@ -58,28 +59,29 @@ export default function Historico() {
       snapshot: JSON.stringify({ proposta: propostaAtual, itens: itensAtuais }),
     }])
 
-    // Restaura snapshot da versão escolhida
     const snap = typeof versao.snapshot === 'string' ? JSON.parse(versao.snapshot) : versao.snapshot
     const novaVersao = (propostaAtual.versao_atual || 1) + 1
 
+    // Atualiza proposta com dados do snapshot
+    const { id: _id, created_at: _c, updated_at: _u, ...snapProposta } = snap.proposta || {}
     await supabase.from('proposals').update({
-      ...snap.proposta,
-      id: propostaId,
+      ...snapProposta,
       versao_atual: novaVersao,
-      updated_at: new Date().toISOString(),
     }).eq('id', propostaId)
 
+    // Restaura itens do snapshot
     if (snap.itens?.length) {
       await supabase.from('proposal_items').delete().eq('proposal_id', propostaId)
-      await supabase.from('proposal_items').insert(
-        snap.itens.map(i => ({ ...i, id: undefined, proposal_id: propostaId }))
-      )
+      const itensLimpos = snap.itens.map(({ id: _i, ...resto }) => ({
+        ...resto,
+        proposal_id: propostaId,
+      }))
+      await supabase.from('proposal_items').insert(itensLimpos)
     }
 
-    alert(`Versão ${versao.label} restaurada! Agora na R${String(novaVersao).padStart(2,'0')}`)
     setShowVersoes(null)
+    alert(`Versão ${versao.label} restaurada com sucesso! Agora na R${String(novaVersao).padStart(2,'0')}`)
     carregarPropostas()
-    router.push(`/escopo?id=${propostaId}`)
   }
 
   async function novaPropostas() {
