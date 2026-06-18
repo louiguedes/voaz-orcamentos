@@ -39,23 +39,29 @@ function SelectFaturamento({ value, onChange }) {
   )
 }
 
-// Margem da disciplina com estado local isolado
-function MargemDisciplinaInput({ discId, onAplicar }) {
-  const [val, setVal] = useState('')
+// Margem da disciplina com estado local isolado e sem re-render no pai
+const MargemDisciplinaInput = ({ discId, onAplicar }) => {
+  const inputRef = useRef(null)
+  function handleAplicar(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    const val = inputRef.current?.value
+    if (val) onAplicar(val)
+  }
   return (
-    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}
+      onClick={e => e.stopPropagation()}>
       <span style={{ fontSize: 11, color: '#aaa' }}>Margem da disciplina:</span>
       <input
+        ref={inputRef}
         type="number"
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && onAplicar(val)}
         placeholder="0"
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAplicar(e) } }}
         style={{ width: 60, border: 'none', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right' }}
       />
       <span style={{ fontSize: 11, color: '#aaa' }}>%</span>
       <button
-        onClick={() => onAplicar(val)}
+        onClick={handleAplicar}
         style={{ background: '#4caf50', color: '#fff', border: 'none', borderRadius: 3, padding: '3px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
       >Aplicar</button>
     </div>
@@ -300,11 +306,29 @@ export default function Proposta() {
   }
 
   async function salvarVersao() {
-    await salvarProposta()
-    const versaoAtual = proposta.versao_atual || 1
-    const novaVersao = versaoAtual + 1
+    setSalvando(true)
+    // Primeiro salva tudo no banco incluindo valor_final
+    await supabase.from('proposals').update({
+      ...proposta,
+      valor_final: valorFinal,
+      area_m2: areM2,
+      tributos: totalImpostoCalculado,
+      desconto,
+      taxa_imposto: parseFloat(proposta.taxa_imposto) || 0,
+    }).eq('id', id)
+    for (const item of itens) {
+      await supabase.from('proposal_items').update({
+        custo_unitario: parseFloat(item.custo_unitario) || 0,
+        margem: parseFloat(item.margem) || 0,
+        faturamento: item.faturamento || 'direto',
+        margem_override: item.margem_override || false,
+      }).eq('id', item.id)
+    }
+    // Agora busca os dados já salvos para o snapshot
     const { data: propostaAtualizada } = await supabase.from('proposals').select('*').eq('id', id).single()
     const { data: itensAtuais } = await supabase.from('proposal_items').select('*').eq('proposal_id', id)
+    const versaoAtual = propostaAtualizada.versao_atual || 1
+    const novaVersao = versaoAtual + 1
     await supabase.from('proposal_versions').insert([{
       proposal_id: id,
       versao: versaoAtual,
@@ -313,7 +337,10 @@ export default function Proposta() {
     }])
     await supabase.from('proposals').update({ versao_atual: novaVersao }).eq('id', id)
     updateProposta('versao_atual', novaVersao)
-    alert(`Versão R${String(versaoAtual).padStart(2,'0')} salva com sucesso! Agora editando R${String(novaVersao).padStart(2,'0')}`)
+    setSalvando(false)
+    setSalvoOk(true)
+    setTimeout(() => setSalvoOk(false), 2500)
+    alert(`✅ Versão R${String(versaoAtual).padStart(2,'0')} salva! Agora editando R${String(novaVersao).padStart(2,'0')}`)
   }
 
   async function handleGerarPDF() {
