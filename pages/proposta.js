@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/router'
 import Layout from '../components/Layout'
 import { supabase } from '../lib/supabaseClient'
@@ -7,8 +7,8 @@ import { gerarPDF } from '../components/PDFTemplate'
 
 // Input que só atualiza no onBlur — evita re-render a cada tecla
 function InputField({ value, onChange, type = 'text', placeholder, style, tabIndex }) {
-  const [local, setLocal] = useState(value || '')
-  useEffect(() => { setLocal(value || '') }, [value])
+  const [local, setLocal] = useState(value ?? '')
+  useEffect(() => { setLocal(value ?? '') }, [value])
   return (
     <input
       type={type}
@@ -19,6 +19,46 @@ function InputField({ value, onChange, type = 'text', placeholder, style, tabInd
       style={style}
       tabIndex={tabIndex}
     />
+  )
+}
+
+// Select que não causa re-render — usa ref
+function SelectFaturamento({ value, onChange }) {
+  const ref = useRef(null)
+  useEffect(() => { if (ref.current) ref.current.value = value || 'direto' }, [value])
+  return (
+    <select
+      ref={ref}
+      defaultValue={value || 'direto'}
+      onBlur={e => onChange(e.target.value)}
+      style={{ fontSize: 11, border: '1px solid #ddd', borderRadius: 3, padding: '2px 4px', background: value === 'indireto' ? '#fff3e0' : '#f5f5f5' }}
+    >
+      <option value="direto">Direto</option>
+      <option value="indireto">Indireto</option>
+    </select>
+  )
+}
+
+// Margem da disciplina com estado local isolado
+function MargemDisciplinaInput({ discId, onAplicar }) {
+  const [val, setVal] = useState('')
+  return (
+    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontSize: 11, color: '#aaa' }}>Margem da disciplina:</span>
+      <input
+        type="number"
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && onAplicar(val)}
+        placeholder="0"
+        style={{ width: 60, border: 'none', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right' }}
+      />
+      <span style={{ fontSize: 11, color: '#aaa' }}>%</span>
+      <button
+        onClick={() => onAplicar(val)}
+        style={{ background: '#4caf50', color: '#fff', border: 'none', borderRadius: 3, padding: '3px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
+      >Aplicar</button>
+    </div>
   )
 }
 
@@ -33,7 +73,7 @@ function DropdownField({ value, onChange, opcoes, label, campo }) {
   useEffect(() => { setLocal(value || '') }, [value])
   useEffect(() => { setListaOpcoes(opcoes) }, [opcoes])
 
-  const opcaoCustom = !listaOpcoes.includes(local) && local !== ''
+  const opcaoCustom = local !== '' && !listaOpcoes.includes(local)
 
   async function adicionarOpcao() {
     if (!novaOpcao.trim()) return
@@ -63,7 +103,7 @@ function DropdownField({ value, onChange, opcoes, label, campo }) {
           >
             <option value="">Selecione...</option>
             {listaOpcoes.map(o => <option key={o} value={o}>{o}</option>)}
-            {opcaoCustom && <option value="__custom__">{local}</option>}
+            {opcaoCustom && <option value={local}>{local}</option>}
             <option value="__custom__">✏️ Digitar livremente...</option>
           </select>
           <button onClick={() => setShowGerenciar(!showGerenciar)}
@@ -118,7 +158,6 @@ export default function Proposta() {
     taxa_imposto: 0, versao_atual: 1,
   })
   const [itens, setItens] = useState([])
-  const [margensDisciplina, setMargensDisciplina] = useState({})
   const [salvando, setSalvando] = useState(false)
   const [salvoOk, setSalvoOk] = useState(false)
   const [gerandoPDF, setGerandoPDF] = useState(false)
@@ -186,12 +225,7 @@ export default function Proposta() {
     })
   }
 
-  function setMargemDisciplinaInput(discId, margem) {
-    setMargensDisciplina(prev => ({ ...prev, [discId]: margem }))
-  }
-
-  function aplicarMargemDisciplina(discId) {
-    const margem = margensDisciplina[discId]
+  function aplicarMargemDisciplina(discId, margem) {
     if (!margem) return
     setItens(prev => prev.map(item => {
       if (item.discId === discId && !item.margem_override) {
@@ -201,12 +235,10 @@ export default function Proposta() {
     }))
   }
 
-  function resetarMargemItem(idx) {
-    const item = itens[idx]
-    const margemDisc = margensDisciplina[item.discId]
+  function resetarMargemItem(idx, discId) {
     setItens(prev => {
       const novo = [...prev]
-      novo[idx] = { ...novo[idx], margem_override: false, margem: parseFloat(margemDisc) || 0 }
+      novo[idx] = { ...novo[idx], margem_override: false }
       return novo
     })
   }
@@ -239,7 +271,6 @@ export default function Proposta() {
   const totalSemImpostos = resumoPorDisc.reduce((s, d) => s + d.total, 0)
   const totalImpostoCalculado = resumoPorDisc.reduce((s, d) => s + d.totalImposto, 0)
   const desconto = parseFloat(proposta.desconto) || 0
-  const descontoPct = parseFloat(proposta.desconto_pct) || 0
   const valorFinal = totalSemImpostos + totalImpostoCalculado - desconto
   const areM2 = parseFloat(proposta.area_m2) || 0
 
@@ -270,17 +301,19 @@ export default function Proposta() {
 
   async function salvarVersao() {
     await salvarProposta()
-    const novaVersao = (proposta.versao_atual || 1) + 1
-    const snapshot = { proposta, itens }
+    const versaoAtual = proposta.versao_atual || 1
+    const novaVersao = versaoAtual + 1
+    const { data: propostaAtualizada } = await supabase.from('proposals').select('*').eq('id', id).single()
+    const { data: itensAtuais } = await supabase.from('proposal_items').select('*').eq('proposal_id', id)
     await supabase.from('proposal_versions').insert([{
       proposal_id: id,
-      versao: proposta.versao_atual || 1,
-      label: `R${String(proposta.versao_atual || 1).padStart(2, '0')}`,
-      snapshot: JSON.stringify(snapshot),
+      versao: versaoAtual,
+      label: `R${String(versaoAtual).padStart(2,'0')}`,
+      snapshot: JSON.stringify({ proposta: propostaAtualizada, itens: itensAtuais }),
     }])
     await supabase.from('proposals').update({ versao_atual: novaVersao }).eq('id', id)
     updateProposta('versao_atual', novaVersao)
-    alert(`Versão R${String(proposta.versao_atual || 1).padStart(2, '0')} salva! Agora na R${String(novaVersao).padStart(2, '0')}`)
+    alert(`Versão R${String(versaoAtual).padStart(2,'0')} salva com sucesso! Agora editando R${String(novaVersao).padStart(2,'0')}`)
   }
 
   async function handleGerarPDF() {
@@ -292,12 +325,9 @@ export default function Proposta() {
     }, 300)
   }
 
-  // Exportar XLSX
   async function exportarXLSX() {
     const { utils, writeFile } = await import('xlsx')
     const wb = utils.book_new()
-
-    // Aba Resumo
     const resumoData = [
       ['VOAZ ORÇAMENTOS', '', '', ''],
       ['Proposta:', proposta.numero, 'Data:', proposta.data],
@@ -320,28 +350,17 @@ export default function Proposta() {
     ]
     const wsResumo = utils.aoa_to_sheet(resumoData)
     utils.book_append_sheet(wb, wsResumo, 'Resumo')
-
-    // Aba Escopo
     const escopoData = [
       ['Código', 'Disciplina', 'Descrição', 'Complemento', 'Unidade', 'Quantidade', 'Custo Unit.', 'Margem %', 'Preço Venda Unit.', 'Valor Total', 'Faturamento', 'Opcional'],
       ...itens.map(item => [
-        item.codigo,
-        item.discNome,
-        item.desc_custom || item.desc,
-        item.desc_complementar || '',
-        item.unidade,
-        item.quantidade,
-        parseFloat(item.custo_unitario) || 0,
-        parseFloat(item.margem) || 0,
-        precoVenda(item),
-        totalItem(item),
-        item.faturamento,
-        item.opcional ? 'Sim' : 'Não',
+        item.codigo, item.discNome, item.desc_custom || item.desc,
+        item.desc_complementar || '', item.unidade, item.quantidade,
+        parseFloat(item.custo_unitario) || 0, parseFloat(item.margem) || 0,
+        precoVenda(item), totalItem(item), item.faturamento, item.opcional ? 'Sim' : 'Não',
       ])
     ]
     const wsEscopo = utils.aoa_to_sheet(escopoData)
     utils.book_append_sheet(wb, wsEscopo, 'Escopo')
-
     writeFile(wb, `VOAZ_${proposta.numero || 'SN'}_${(proposta.cliente_nome || 'Proposta').replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`)
   }
 
@@ -355,13 +374,9 @@ export default function Proposta() {
   const Field = ({ label, campo, type = 'text', full = false, tabIndex }) => (
     <div style={{ marginBottom: 14, gridColumn: full ? '1/-1' : undefined }}>
       <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 4, textTransform: 'uppercase' }}>{label}</label>
-      <InputField
-        type={type}
-        value={proposta[campo] || ''}
-        onChange={v => updateProposta(campo, v)}
+      <InputField type={type} value={proposta[campo] || ''} onChange={v => updateProposta(campo, v)}
         tabIndex={tabIndex}
-        style={{ width: '100%', border: '1px solid #ccc', borderRadius: 4, padding: '7px 10px', fontSize: 13, boxSizing: 'border-box' }}
-      />
+        style={{ width: '100%', border: '1px solid #ccc', borderRadius: 4, padding: '7px 10px', fontSize: 13, boxSizing: 'border-box' }} />
     </div>
   )
 
@@ -390,7 +405,6 @@ export default function Proposta() {
           </div>
         </div>
 
-        {/* Proposta info */}
         <Section titulo="PROPOSTA COMERCIAL">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 16 }}>
             <Field label="Número" campo="numero" tabIndex={1} />
@@ -399,7 +413,6 @@ export default function Proposta() {
           </div>
         </Section>
 
-        {/* Dados do cliente */}
         <Section titulo="DADOS DO CLIENTE">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <div style={{ gridColumn: '1/-1' }}><Field label="Nome" campo="cliente_nome" tabIndex={4} /></div>
@@ -410,7 +423,6 @@ export default function Proposta() {
           </div>
         </Section>
 
-        {/* Condições de fornecimento */}
         <Section titulo="CONDIÇÕES DE FORNECIMENTO">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <DropdownField label="Frete" campo="frete" value={proposta.frete} onChange={v => updateProposta('frete', v)} opcoes={opcoes.frete} />
@@ -421,7 +433,6 @@ export default function Proposta() {
           </div>
         </Section>
 
-        {/* Condições financeiras */}
         <Section titulo="CONDIÇÕES FINANCEIRAS">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <Field label="Impostos" campo="impostos" tabIndex={11} />
@@ -434,7 +445,6 @@ export default function Proposta() {
           </div>
         </Section>
 
-        {/* Resumo financeiro */}
         <Section titulo="RESUMO FINANCEIRO">
           {resumoPorDisc.length === 0 ? (
             <p style={{ color: '#999', fontSize: 13 }}>Nenhum item selecionado. <a href={`/escopo?id=${id}`} style={{ color: '#111' }}>→ Ir para o Escopo</a></p>
@@ -474,16 +484,13 @@ export default function Proposta() {
             </table>
           )}
 
-          {/* Tributos, desconto, total */}
           <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 4 }}>TAXA IMPOSTO (%)</label>
               <InputField type="number" value={proposta.taxa_imposto || ''}
                 onChange={v => updateProposta('taxa_imposto', v)}
                 style={{ width: '100%', border: '1px solid #ccc', borderRadius: 4, padding: '7px 10px', fontSize: 13, boxSizing: 'border-box', textAlign: 'right' }} />
-              <div style={{ fontSize: 11, color: '#c00', marginTop: 2 }}>
-                Calculado: R$ {fmt(totalImpostoCalculado)}
-              </div>
+              <div style={{ fontSize: 11, color: '#c00', marginTop: 2 }}>Calculado: R$ {fmt(totalImpostoCalculado)}</div>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 4 }}>DESCONTO (R$)</label>
@@ -517,7 +524,6 @@ export default function Proposta() {
           </div>
         </Section>
 
-        {/* Escopo com precificação */}
         <Section titulo="ESCOPO DETALHADO — PRECIFICAÇÃO">
           {itens.length === 0 ? (
             <p style={{ color: '#999', fontSize: 13 }}>Nenhum item selecionado.</p>
@@ -545,28 +551,15 @@ export default function Proposta() {
                       const rows = []
                       if (item.discId !== lastDisc) {
                         lastDisc = item.discId
-                        const margemDisc = margensDisciplina[item.discId] || ''
                         rows.push(
                           <tr key={`disc-${item.discId}-${idx}`}>
                             <td colSpan={10} style={{ background: '#1a1a1a', color: '#fff', padding: '7px 10px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                                 <span style={{ fontWeight: 700, fontSize: 12 }}>{item.discId.padStart(2,'0')}. {item.discNome}</span>
-                                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontSize: 11, color: '#aaa' }}>Margem da disciplina:</span>
-                                <input
-                                  type="number"
-                                  value={margensDisciplina[item.discId] || ''}
-                                  onChange={e => setMargemDisciplinaInput(item.discId, e.target.value)}
-                                  onKeyDown={e => e.key === 'Enter' && aplicarMargemDisciplina(item.discId)}
-                                  placeholder="0"
-                                  style={{ width: 60, border: 'none', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right' }}
+                                <MargemDisciplinaInput
+                                  discId={item.discId}
+                                  onAplicar={margem => aplicarMargemDisciplina(item.discId, margem)}
                                 />
-                                <span style={{ fontSize: 11, color: '#aaa' }}>%</span>
-                                <button
-                                  onClick={() => aplicarMargemDisciplina(item.discId)}
-                                  style={{ background: '#4caf50', color: '#fff', border: 'none', borderRadius: 3, padding: '3px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 700 }}
-                                >Aplicar</button>
-                              </div>
                               </div>
                             </td>
                           </tr>
@@ -575,7 +568,7 @@ export default function Proposta() {
                       const pv = precoVenda(item)
                       const tot = totalItem(item)
                       rows.push(
-                        <tr key={item.id} style={{ borderBottom: '1px solid #eee', background: item.margem_override ? '#fff8e1' : idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                        <tr key={item.id || idx} style={{ borderBottom: '1px solid #eee', background: item.margem_override ? '#fff8e1' : idx % 2 === 0 ? '#fff' : '#fafafa' }}>
                           <td style={{ padding: '5px 8px', color: '#888', fontFamily: 'monospace', fontSize: 11 }}>{item.codigo}</td>
                           <td style={{ padding: '5px 8px', lineHeight: 1.3 }}>
                             <div>{item.desc_custom || item.desc}</div>
@@ -590,28 +583,22 @@ export default function Proposta() {
                               style={{ width: '100%', border: '1px solid #ddd', borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right', background: '#fffef0' }} />
                           </td>
                           <td style={{ padding: '5px 4px' }}>
-                            <div style={{ position: 'relative' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                               <InputField type="number" value={item.margem || ''}
                                 onChange={v => updateItem(idx, 'margem', v)}
                                 placeholder="0" tabIndex={21 + idx * 2}
                                 style={{ width: '100%', border: `1px solid ${item.margem_override ? '#f9a825' : '#ddd'}`, borderRadius: 3, padding: '3px 6px', fontSize: 12, textAlign: 'right', background: item.margem_override ? '#fff8e1' : '#fffef0' }} />
                               {item.margem_override && (
-                                <button onClick={() => resetarMargemItem(idx)}
+                                <button onClick={() => resetarMargemItem(idx, item.discId)}
                                   title="Voltar para margem da disciplina"
-                                  style={{ position: 'absolute', right: -18, top: 2, background: 'none', border: 'none', color: '#f9a825', cursor: 'pointer', fontSize: 12 }}>↺</button>
+                                  style={{ background: 'none', border: 'none', color: '#f9a825', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}>↺</button>
                               )}
                             </div>
                           </td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600 }}>R$ {fmt(pv)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 700, color: tot > 0 ? '#111' : '#ccc' }}>R$ {fmt(tot)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'center' }}>
-                            <select
-                              defaultValue={item.faturamento || 'direto'}
-                              onBlur={e => updateItem(idx, 'faturamento', e.target.value)}
-                              style={{ fontSize: 11, border: '1px solid #ddd', borderRadius: 3, padding: '2px 4px', background: item.faturamento === 'indireto' ? '#fff3e0' : '#f5f5f5' }}>
-                              <option value="direto">Direto</option>
-                              <option value="indireto">Indireto</option>
-                            </select>
+                            <SelectFaturamento value={item.faturamento} onChange={v => updateItem(idx, 'faturamento', v)} />
                           </td>
                           <td style={{ padding: '5px 8px', textAlign: 'center', fontSize: 11, color: '#888' }}>
                             {item.opcional ? 'opc.' : ''}
@@ -627,7 +614,6 @@ export default function Proposta() {
           )}
         </Section>
 
-        {/* Sticky bottom */}
         <div style={{ position: 'sticky', bottom: 16, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           {salvoOk && <span style={{ background: '#e8f5e9', color: '#1b5e20', padding: '10px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600 }}>✓ Salvo!</span>}
           <button className="btn-secondary" onClick={salvarProposta} disabled={salvando} style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
